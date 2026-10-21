@@ -600,21 +600,59 @@ button { font-family: inherit; }
 <body>
 
 <div id="gate" style="position:fixed;inset:0;z-index:9999;background:#f3f1ec;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif">
- <form id="gateForm" style="background:#fff;padding:28px;border-radius:18px;box-shadow:0 8px 28px rgba(0,0,0,.08);text-align:center;width:min(320px,90vw)">
+ <div style="background:#fff;padding:28px;border-radius:18px;box-shadow:0 8px 28px rgba(0,0,0,.08);text-align:center;width:min(320px,90vw)">
   <div style="font-weight:650;font-size:1.2rem;margin-bottom:6px">Job Apps</div>
-  <div style="color:#57534e;font-size:.9rem;margin-bottom:16px">Enter your 6-digit passcode</div>
-  <input id="gateIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" style="font-size:1.5rem;letter-spacing:.4em;text-align:center;width:100%;padding:10px;border:1px solid #e7e5e4;border-radius:12px">
-  <div id="gateErr" style="color:#9f1239;font-size:.85rem;height:1.2em;margin-top:8px"></div>
-  <button style="margin-top:8px;width:100%;padding:12px;border:0;border-radius:12px;background:#3d5a80;color:#fff;font-size:1rem">Unlock</button>
- </form>
+  <button id="fidBtn" type="button" style="display:none;margin:8px 0 14px;width:100%;padding:12px;border:0;border-radius:12px;background:#3d5a80;color:#fff;font-size:1rem">Unlock with Face ID</button>
+  <form id="gateForm">
+   <div id="gateMsg" style="color:#57534e;font-size:.9rem;margin-bottom:16px">Enter your 6-digit passcode</div>
+   <input id="gateIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" style="font-size:1.5rem;letter-spacing:.4em;text-align:center;width:100%;padding:10px;border:1px solid #e7e5e4;border-radius:12px">
+   <div id="gateErr" style="color:#9f1239;font-size:.85rem;min-height:1.2em;margin-top:8px"></div>
+   <button id="gateBtn" style="margin-top:8px;width:100%;padding:12px;border:0;border-radius:12px;background:#3d5a80;color:#fff;font-size:1rem">Unlock</button>
+  </form>
+  <div id="enroll" style="display:none">
+   <div style="color:#57534e;font-size:.95rem;margin:6px 0 14px">Use Face ID to unlock next time?</div>
+   <button id="enrollYes" type="button" style="width:100%;padding:12px;border:0;border-radius:12px;background:#3d5a80;color:#fff;font-size:1rem">Turn on Face ID</button>
+   <button id="enrollNo" type="button" style="margin-top:8px;width:100%;padding:10px;border:0;border-radius:12px;background:transparent;color:#57534e;font-size:.95rem">Not now</button>
+  </div>
+ </div>
 </div>
 <script>
 (function(){
- var H="234aa7f1854533bd4c08d4631f21ea22093e3dbebe924ab91204348852167728",K="jobapps_pass";
+ var H="234aa7f1854533bd4c08d4631f21ea22093e3dbebe924ab91204348852167728",K="jobapps_pass",C="jobapps_fid";
+ var $=function(i){return document.getElementById(i)};
+ function b64(buf){return btoa(String.fromCharCode.apply(null,new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
+ function unb64(s){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";return Uint8Array.from(atob(s),function(c){return c.charCodeAt(0)})}
+ function rnd(n){var a=new Uint8Array(n);crypto.getRandomValues(a);return a}
  async function sha(t){var b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,"0")}).join("")}
- function open(){document.getElementById("gate").remove()}
- if(localStorage.getItem(K)===H){open();return}
- document.getElementById("gateForm").addEventListener("submit",async function(e){e.preventDefault();var h=await sha(document.getElementById("gateIn").value.trim());if(h===H){localStorage.setItem(K,h);open()}else{document.getElementById("gateErr").textContent="Wrong passcode"}});
+ function open(){var g=$("gate");if(g)g.remove()}
+ var cred=localStorage.getItem(C);
+ var hasWA=!!(window.PublicKeyCredential&&navigator.credentials);
+ async function faceUnlock(){
+  try{
+   await navigator.credentials.get({publicKey:{challenge:rnd(32),allowCredentials:[{type:"public-key",id:unb64(cred)}],userVerification:"required",timeout:60000}});
+   localStorage.setItem(K,H);open();
+  }catch(e){$("gateErr").textContent="Face ID didn't work. Use your passcode."}
+ }
+ if(cred&&hasWA&&localStorage.getItem(K)===H){
+  $("fidBtn").style.display="block";$("fidBtn").onclick=faceUnlock;
+  $("gateMsg").textContent="Or enter your 6-digit passcode";
+  faceUnlock();
+ }else if(!cred&&localStorage.getItem(K)===H){open();return}
+ async function offerEnroll(){
+  var ok=false;
+  try{ok=hasWA&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()}catch(e){}
+  if(!ok||localStorage.getItem(C)){open();return}
+  $("gateForm").style.display="none";$("fidBtn").style.display="none";$("enroll").style.display="block";
+  $("enrollNo").onclick=open;
+  $("enrollYes").onclick=async function(){
+   try{
+    var c=await navigator.credentials.create({publicKey:{challenge:rnd(32),rp:{name:"Job Apps"},user:{id:rnd(16),name:"Sebas",displayName:"Sebas"},pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],authenticatorSelection:{authenticatorAttachment:"platform",userVerification:"required",residentKey:"preferred"},timeout:60000}});
+    localStorage.setItem(C,b64(c.rawId));
+   }catch(e){}
+   open();
+  };
+ }
+ $("gateForm").addEventListener("submit",async function(e){e.preventDefault();var h=await sha($("gateIn").value.trim());if(h===H){localStorage.setItem(K,h);if(localStorage.getItem(C)){open()}else{offerEnroll()}}else{$("gateErr").textContent="Wrong passcode"}});
 })();
 </script>
 
